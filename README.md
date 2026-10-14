@@ -1,174 +1,128 @@
 # mcp-rea
 
-Servidor MCP sobre [FastMCP](https://github.com/PrefectHQ/fastmcp) para
-[REA (Reverse Engineer Anything)](https://www.npmjs.com/package/rea-agents), el
-MCP de ingeniería inversa para binarios nativos, aplicaciones JavaScript/Electron,
-ensamblados .NET y sitios web.
+Servidor MCP para [REA (Reverse Engineer Anything)](https://www.npmjs.com/package/rea-agents),
+construido sobre [FastMCP](https://github.com/PrefectHQ/fastmcp) y empaquetado en Docker.
+Expone las tools y prompts de REA a cualquier agente compatible con MCP, más un
+`health_check` para comprobar que todo funciona.
 
-Este servidor **no reimplementa REA**: lanza el MCP oficial (`rea-agents mcp`,
-protocolo 2024-11-05 por stdio) y lo reexpone con FastMCP. Un cliente ve el mismo
-catálogo que hablando directamente con REA (170 tools y 6 prompts en 6.4.0), más:
+## 1. Construir la imagen
 
-| Aporta | Detalle |
-|---|---|
-| Transporte HTTP | Streamable HTTP con token Bearer, además de stdio |
-| `health_check` | Tool que comprueba de verdad el backend (comando, conexión, nº de tools) |
-| `GET /health` | Liveness para Docker; no arranca ni consulta REA |
-| Arranque seguro | Se niega a servir HTTP fuera de loopback sin `MCP_AUTH_TOKEN` |
-| Un solo proceso REA | Reutilizado entre llamadas: REA guarda estado en proceso |
-
-## Requisitos
-
-- Python ≥ 3.11
-- Node ≥ 22.19 (lo exige `rea-agents`) y acceso a npm la primera vez
-- Para análisis nativo, un proveedor instalado (Hopper, Ghidra o IDA); ver la
-  [documentación de REA](https://rea.tools/)
-
-```bash
-pip install -r requirements.txt
-```
-
-## Uso
-
-### Con Docker, en la configuración del agente (recomendado)
-
-El agente lanza el contenedor por stdio: no hace falta Python ni Node en la
-máquina, solo Docker. Construya la imagen una vez:
+Solo hace falta Docker:
 
 ```bash
 docker build -t rea-mcp .
 ```
 
-Y registre el servidor en el agente. En los que usan JSON (`.mcp.json` de Claude
-Code, `claude_desktop_config.json`, Cursor…):
+## 2. Registrarlo en el agente
+
+El agente lanza el contenedor por stdio con este comando:
+
+```
+docker run -i --rm --init -v /ruta/a/artefactos:/targets:ro rea-mcp
+```
+
+- Sustituya `/ruta/a/artefactos` por la **ruta absoluta** de la carpeta con lo que
+  quiera analizar. El agente la verá como `/targets/...`.
+- Use `-i`, **nunca `-t`**: un TTY corrompe el protocolo.
+
+### Claude Code
+
+```bash
+claude mcp add rea --scope user -- docker run -i --rm --init -v /ruta/a/artefactos:/targets:ro rea-mcp
+```
+
+O en `.mcp.json` (proyecto):
 
 ```json
 {
   "mcpServers": {
     "rea": {
       "command": "docker",
-      "args": [
-        "run", "-i", "--rm", "--init",
-        "-v", "/ruta/a/mis/artefactos:/targets:ro",
-        "rea-mcp"
-      ]
+      "args": ["run", "-i", "--rm", "--init", "-v", "/ruta/a/artefactos:/targets:ro", "rea-mcp"]
     }
   }
 }
 ```
 
-Con la CLI de Claude Code:
+### Claude Desktop
 
-```bash
-claude mcp add rea --scope user -- \
-  docker run -i --rm --init -v /ruta/a/mis/artefactos:/targets:ro rea-mcp
-```
+Mismo bloque JSON anterior, en `claude_desktop_config.json`
+(macOS: `~/Library/Application Support/Claude/`, Windows: `%APPDATA%\Claude\`).
+Reinicie la aplicación.
 
-Puntos que importan:
+### Cursor
 
-- **`-i` es imprescindible** (stdin abierto); **no use `-t`**: un TTY corrompe el
-  protocolo. `--rm` borra el contenedor al cerrar el agente y `--init` garantiza
-  que REA termine con él.
-- **Los artefactos a analizar** deben montarse con `-v`; el agente los verá en
-  `/targets/...` (no en la ruta del anfitrión). Móntelos en solo lectura (`:ro`).
-- **Variables de entorno** (ver más abajo) se pasan con `-e`, p. ej.
-  `"-e", "REA_CALL_TIMEOUT=1800"`. No ponga secretos en el JSON si lo versiona.
-- **La primera llamada** tarda unos segundos más (arranque de REA); después se
-  reutiliza el mismo proceso mientras viva el contenedor.
-- En Windows, Docker Desktop acepta rutas tipo `C:\\artefactos:/targets:ro`.
-- Los **proveedores nativos** (Hopper, Ghidra, IDA) viven en el anfitrión y el
-  contenedor no los ve. Según la documentación de REA, el análisis estático de
-  JavaScript/Electron no necesita proveedor; el análisis nativo sí, así que para
-  ese caso use el modo local de abajo. No he probado en contenedor ningún análisis
-  real, solo el arranque y el catálogo de tools.
-
-### Sin Docker (stdio local)
-
-Requiere Python ≥ 3.11 y `node`/`npx` en el `PATH` del proceso:
+`.cursor/mcp.json` (proyecto) o `~/.cursor/mcp.json` (global):
 
 ```json
 {
   "mcpServers": {
     "rea": {
-      "command": "python",
-      "args": ["-m", "src.server"],
-      "cwd": "/ruta/a/mcp-rea"
+      "type": "stdio",
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--init", "-v", "/ruta/a/artefactos:/targets:ro", "rea-mcp"]
     }
   }
 }
 ```
 
-### HTTP
+### opencode
 
-```bash
-export MCP_AUTH_TOKEN=$(openssl rand -hex 32)
-python -m src.server --transport http          # 127.0.0.1:8000/mcp
-```
-
-Los clientes envían `Authorization: Bearer <token>`. En loopback el token es
-opcional; fuera de loopback es obligatorio.
-
-### Docker Compose (HTTP, servicio permanente)
-
-Para un servidor que siga corriendo y al que se conecten varios clientes:
-
-```bash
-cp .env.example .env        # defina MCP_AUTH_TOKEN
-docker compose up -d --build
-```
-
-Publica `127.0.0.1:8000` y monta `./targets` (o `REA_TARGETS_DIR`) como `/targets`
-en solo lectura. El agente se configura entonces por URL, con el token:
+`opencode.json` (proyecto) o `~/.config/opencode/opencode.json` (global). Aquí el
+comando es un único array y el `timeout` es imprescindible: el defecto (5 s) es
+poco para arrancar el contenedor.
 
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "rea": {
-      "type": "http",
-      "url": "http://127.0.0.1:8000/mcp",
-      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+      "type": "local",
+      "command": ["docker", "run", "-i", "--rm", "--init", "-v", "/ruta/a/artefactos:/targets:ro", "rea-mcp"],
+      "enabled": true,
+      "timeout": 60000
     }
   }
 }
 ```
 
-> La imagen instala `rea-agents` una vez en build y lo ejecuta directamente,
-> sin `npx` en tiempo de ejecución.
+### Hermes Agent
 
-## Configuración
+`~/.hermes/config.yaml`:
 
-Todas por variable de entorno (ver `.env.example`); `--transport`, `--host`,
-`--port` y `--path` en la CLI prevalecen.
-
-| Variable | Defecto | Descripción |
-|---|---|---|
-| `MCP_TRANSPORT` | `stdio` | `stdio` o `http` |
-| `MCP_HOST` / `MCP_PORT` / `MCP_PATH` | `127.0.0.1` / `8000` / `/mcp` | Solo HTTP |
-| `MCP_AUTH_TOKEN` | — | Token Bearer; obligatorio si el host no es loopback |
-| `REA_COMMAND` / `REA_ARGS` | `npx` / `-y --prefer-offline rea-agents@6.4.0 mcp` | Cómo lanzar REA |
-| `REA_INIT_TIMEOUT` | `180` | Segundos para arrancar REA |
-| `REA_CALL_TIMEOUT` | `600` | Segundos por llamada a una tool |
-| `LOG_LEVEL` | `INFO` | Se escribe en stderr (stdout es el canal del protocolo) |
-
-`MCP_AUTH_TOKEN` no se hereda al proceso REA; el resto del entorno sí, para que
-REA vea su propia configuración de proveedores.
-
-## Desarrollo
-
-```bash
-pip install -r requirements-dev.txt
-pytest                              # unitarios, backend simulado en memoria
-REA_INTEGRATION=1 pytest -m integration   # contra el REA real
+```yaml
+mcp_servers:
+  rea:
+    command: "docker"
+    args: ["run", "-i", "--rm", "--init", "-v", "/ruta/a/artefactos:/targets:ro", "rea-mcp"]
+    connect_timeout: 60
+    timeout: 600
 ```
 
-## Límites conocidos
+Recargue con `/reload-mcp` (o abra una sesión nueva) y compruebe con
+`hermes mcp test rea`. Los valores de `connect_timeout` y `timeout` no tienen
+unidad documentada; se asumen segundos, así que revíselos si algo expira.
 
-- **Estado compartido.** Hay un único proceso REA; todos los clientes HTTP
-  comparten documentos abiertos y snapshots. Pensado para un usuario o equipo
-  pequeño, no para multiusuario aislado.
-- **Arranque en frío.** La primera conexión descarga `rea-agents` si no está en
-  la caché de npm; por eso el timeout de arranque es generoso.
-- **Modo `legacy` forzado hacia REA.** FastMCP 4 negocia por defecto con
-  `server/discover`, que REA no contesta: cada conexión esperaría ~60 s. Si REA
-  pasa a hablar el protocolo moderno, se puede quitar `mode="legacy"` en
-  `build_backend_client`.
+## 3. Comprobar que funciona
+
+Pida al agente que llame a la tool **`health_check`**. Debe devolver
+`status: "healthy"` y `backend.reachable: true`. La primera llamada tarda unos
+segundos más porque REA arranca en frío.
+
+## Problemas habituales
+
+| Síntoma | Causa y solución |
+|---|---|
+| `Unable to find image 'rea-mcp'` | No construyó la imagen (paso 1) o está en otra máquina. |
+| El servidor no conecta o responde basura | Lleva `-t` en el comando, o Docker no está en marcha. |
+| opencode dice que expiró | Suba `timeout`; el defecto es 5000 ms. |
+| No encuentra mis archivos | Use la ruta `/targets/...` y monte la carpeta con `-v`. |
+
+## Límites
+
+- **Análisis nativo** (Hopper, Ghidra, IDA): esos programas viven en su máquina y el
+  contenedor no los ve. Para ese caso ejecute el servidor sin Docker:
+  `pip install -r requirements.txt` y use `python -m src.server` como comando.
+- Hay un único proceso REA por contenedor, compartido por todo lo que se conecte a él.
+- Variables avanzadas (HTTP, tokens, timeouts) en `.env.example`; tests con
+  `pip install -r requirements-dev.txt && pytest`.
