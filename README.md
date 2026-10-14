@@ -30,7 +30,61 @@ pip install -r requirements.txt
 
 ## Uso
 
-### stdio (Claude Desktop, Claude Code, Cursor…)
+### Con Docker, en la configuración del agente (recomendado)
+
+El agente lanza el contenedor por stdio: no hace falta Python ni Node en la
+máquina, solo Docker. Construya la imagen una vez:
+
+```bash
+docker build -t rea-mcp .
+```
+
+Y registre el servidor en el agente. En los que usan JSON (`.mcp.json` de Claude
+Code, `claude_desktop_config.json`, Cursor…):
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm", "--init",
+        "-v", "/ruta/a/mis/artefactos:/targets:ro",
+        "rea-mcp"
+      ]
+    }
+  }
+}
+```
+
+Con la CLI de Claude Code:
+
+```bash
+claude mcp add rea --scope user -- \
+  docker run -i --rm --init -v /ruta/a/mis/artefactos:/targets:ro rea-mcp
+```
+
+Puntos que importan:
+
+- **`-i` es imprescindible** (stdin abierto); **no use `-t`**: un TTY corrompe el
+  protocolo. `--rm` borra el contenedor al cerrar el agente y `--init` garantiza
+  que REA termine con él.
+- **Los artefactos a analizar** deben montarse con `-v`; el agente los verá en
+  `/targets/...` (no en la ruta del anfitrión). Móntelos en solo lectura (`:ro`).
+- **Variables de entorno** (ver más abajo) se pasan con `-e`, p. ej.
+  `"-e", "REA_CALL_TIMEOUT=1800"`. No ponga secretos en el JSON si lo versiona.
+- **La primera llamada** tarda unos segundos más (arranque de REA); después se
+  reutiliza el mismo proceso mientras viva el contenedor.
+- En Windows, Docker Desktop acepta rutas tipo `C:\\artefactos:/targets:ro`.
+- Los **proveedores nativos** (Hopper, Ghidra, IDA) viven en el anfitrión y el
+  contenedor no los ve. Según la documentación de REA, el análisis estático de
+  JavaScript/Electron no necesita proveedor; el análisis nativo sí, así que para
+  ese caso use el modo local de abajo. No he probado en contenedor ningún análisis
+  real, solo el arranque y el catálogo de tools.
+
+### Sin Docker (stdio local)
+
+Requiere Python ≥ 3.11 y `node`/`npx` en el `PATH` del proceso:
 
 ```json
 {
@@ -44,11 +98,6 @@ pip install -r requirements.txt
 }
 ```
 
-Con Claude Code: `claude mcp add rea --scope user -- python -m src.server`
-(ejecutado desde la carpeta del repo, o con la ruta completa en `cwd`).
-
-El cliente debe dejar `node`/`npx` en el `PATH` del proceso.
-
 ### HTTP
 
 ```bash
@@ -59,7 +108,9 @@ python -m src.server --transport http          # 127.0.0.1:8000/mcp
 Los clientes envían `Authorization: Bearer <token>`. En loopback el token es
 opcional; fuera de loopback es obligatorio.
 
-### Docker
+### Docker Compose (HTTP, servicio permanente)
+
+Para un servidor que siga corriendo y al que se conecten varios clientes:
 
 ```bash
 cp .env.example .env        # defina MCP_AUTH_TOKEN
@@ -67,8 +118,19 @@ docker compose up -d --build
 ```
 
 Publica `127.0.0.1:8000` y monta `./targets` (o `REA_TARGETS_DIR`) como `/targets`
-en solo lectura: ahí van los artefactos a analizar. Para stdio:
-`docker run -i --rm rea-mcp`.
+en solo lectura. El agente se configura entonces por URL, con el token:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+    }
+  }
+}
+```
 
 > La imagen instala `rea-agents` una vez en build y lo ejecuta directamente,
 > sin `npx` en tiempo de ejecución.
