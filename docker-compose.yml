@@ -18,10 +18,6 @@ services:
     init: true
     restart: unless-stopped
     network_mode: host
-    environment:
-      - GRAFANA_URL=${GRAFANA_URL:-http://10.128.60.58:3019}
-      - GRAFANA_API_KEY=${GRAFANA_API_KEY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     env_file:
       - .env
     healthcheck:
@@ -30,19 +26,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  # ── One-shot MCP call ───────────────────────────────────────────────
-  # Ejemplo: docker compose run --rm rea-mcp-run
-  rea-mcp-run:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: rea-mcp:latest
-    stdin_open: true
-    network_mode: host
-    environment:
-      - GRAFANA_URL=${GRAFANA_URL:-http://10.128.60.58:3019}
-      - GRAFANA_API_KEY=${GRAFANA_API_KEY:-}
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-    env_file:
-      - .env
