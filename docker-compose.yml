@@ -1,27 +1,42 @@
-version: "3.9"
-
+# Servidor MCP para REA por HTTP (streamable) con autenticación por token.
+#
+#   1. cp .env.example .env   y defina MCP_AUTH_TOKEN
+#   2. docker compose up -d --build
+#   3. cliente MCP -> http://127.0.0.1:8000/mcp   (cabecera Authorization: Bearer <token>)
+#
+# Para stdio (Claude Desktop, Claude Code, etc.) no hace falta compose:
+#   docker run -i --rm rea-mcp
 services:
-  # ── REA MCP Server using npx oficial ──────────────────────────────────
-  # Este servicio usa el comando oficial: npx -y rea-agents@6.4.0 mcp
-  # Para conexión directa via stdio:
-  #   docker run -i --rm rea-mcp
-  # Para conexión via docker exec:
-  #   docker exec -i rea-mcp python -m src.server (fallback)
-  rea-mcp-daemon:
+  rea-mcp:
     build:
       context: .
       dockerfile: Dockerfile
     image: rea-mcp:latest
     container_name: rea-mcp
-    stdin_open: true
-    tty: true
     init: true
     restart: unless-stopped
-    network_mode: host
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      # REA puede leer binarios locales y lanzar análisis nativo: no se arranca sin token.
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?defina MCP_AUTH_TOKEN en .env}
+    ports:
+      # Solo loopback del host. Para exponerlo en red, use un proxy con TLS delante.
+      - "127.0.0.1:${MCP_PORT:-8000}:8000"
+    volumes:
+      # Carpeta con los artefactos a analizar (solo lectura).
+      - ${REA_TARGETS_DIR:-./targets}:/targets:ro
     healthcheck:
-      test: ["CMD-SHELL', 'printf \'{"jsonrpc":"2.0","id":1,"method":"initialize"}\\n'\'' | npx -y rea-agents@6.4.0 mcp 2>/dev/null | grep -q jsonrpc']
+      # Liveness barata: /health no arranca ni consulta el backend REA.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
       interval: 30s
       timeout: 5s
       retries: 3

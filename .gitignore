@@ -1,0 +1,12 @@
+# Secretos y configuración local
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Artefactos a analizar con REA (montados en el contenedor)
+targets/
