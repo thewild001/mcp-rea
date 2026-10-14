@@ -8,12 +8,7 @@ import sys
 import json
 import os
 
-# ─── CRITICAL: Disable transparent proxy BEFORE any imports ──────────────────
-# Cntlm transparent proxy intercepts at socket level via env vars.
-# Must be unset/overridden before any HTTP session creation.
-os.environ["HTTP_PROXY"] = ""
-os.environ["HTTPS_PROXY"] = ""
-os.environ["NO_PROXY"] = "localhost,127.0.0.1,localhost,.local,.internal"
+
 
 # Add the project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
