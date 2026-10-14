@@ -13,3 +13,4 @@ venv
 pytest.ini
 requirements-dev.txt
 README.md
+# scripts/ sí se copia a la imagen: el build lo usa como prueba de humo.
