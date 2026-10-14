@@ -12,6 +12,9 @@ services:
       context: .
       dockerfile: Dockerfile
     image: rea-mcp:latest
+    # La release oficial de Ghidra solo trae decompilador nativo para x86-64:
+    # en Apple Silicon/ARM se construye y ejecuta como amd64 (emulado).
+    platform: linux/amd64
     container_name: rea-mcp
     init: true
     restart: unless-stopped
